@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ImagePlus, LoaderCircle, Send, X } from "lucide-react";
 import "./ChatWidget.css";
-import { createAuthedSupabaseClient } from "./supabase";
+import { createSupabaseClient } from "./supabase";
 import { decodeJwtClaims, parseWidgetParams } from "./token";
 import { defaultTheme, mergeTheme } from "./theme";
 
@@ -14,7 +14,7 @@ function formatTime(ts) {
   }
 }
 
-function ActionCard({ supabase, actionPayload, myRole }) {
+function ActionCard({ supabase, actionPayload, myRole, authHeaders }) {
   const actionId = actionPayload && typeof actionPayload === "object" ? actionPayload.action_id : null;
   const [action, setAction] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -87,6 +87,7 @@ function ActionCard({ supabase, actionPayload, myRole }) {
                       result: { cta_id: id, url: cta.url ?? null },
                       message_direction: myRole === "agent" ? "outbound" : "inbound",
                     },
+                    headers: authHeaders,
                   });
 
                   if (!error) {
@@ -170,8 +171,13 @@ export default function ChatWidget() {
   const audioUnlockedRef = useRef(false);
   const supabase = useMemo(() => {
     if (!token) return null;
-    return createAuthedSupabaseClient(token);
+    return createSupabaseClient();
   }, [token]);
+
+  const authHeaders = useMemo(
+    () => (token ? { Authorization: `Bearer ${token}` } : undefined),
+    [token]
+  );
 
   useEffect(() => {
     if (!claims?.application_id) return;
@@ -309,6 +315,7 @@ export default function ChatWidget() {
         setError("");
         const { data, error: fnErr } = await supabase.functions.invoke("create_or_get_conversation", {
           body: {},
+          headers: authHeaders,
         });
         if (fnErr) throw fnErr;
         if (!data?.conversation_id) throw new Error("Missing conversation_id");
@@ -350,7 +357,7 @@ export default function ChatWidget() {
       }
       setMessages(data ?? []);
 
-      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId } });
+      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId }, headers: authHeaders });
 
       setLoadingMessages(false);
 
@@ -484,6 +491,7 @@ export default function ChatWidget() {
           client_message_id: clientMessageId,
           attachments,
         },
+        headers: authHeaders,
       });
       if (fnErr) throw fnErr;
 
@@ -503,7 +511,7 @@ export default function ChatWidget() {
       setText("");
       setFile(null);
       autosizeInput();
-      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId } });
+      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId }, headers: authHeaders });
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       setError(m);
@@ -599,7 +607,7 @@ export default function ChatWidget() {
                   message_direction: myRole === "agent" ? "outbound" : "inbound",
                 };
 
-                const { error: fnErr } = await supabase.functions.invoke("create_action", { body });
+                const { error: fnErr } = await supabase.functions.invoke("create_action", { body, headers: authHeaders });
                 if (fnErr) setError(fnErr.message);
               }}
             >
@@ -643,7 +651,7 @@ export default function ChatWidget() {
               return (
                 <div key={m.id} className={rowClass}>
                   <div className={bubbleClass}>
-                    <ActionCard supabase={supabase} actionPayload={m.payload} myRole={myRole} />
+                    <ActionCard supabase={supabase} actionPayload={m.payload} myRole={myRole} authHeaders={authHeaders} />
                     <div className="msw-meta">
                       <span>{formatTime(m.created_at)}</span>
                       <span>{m.sender_type}</span>
