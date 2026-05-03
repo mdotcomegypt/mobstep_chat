@@ -171,7 +171,7 @@ export default function ChatWidget() {
   const audioUnlockedRef = useRef(false);
   const supabase = useMemo(() => {
     if (!token) return null;
-    return createSupabaseClient();
+    return createSupabaseClient(token);
   }, [token]);
 
   const authHeaders = useMemo(
