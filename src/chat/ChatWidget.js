@@ -314,7 +314,10 @@ export default function ChatWidget() {
       try {
         setError("");
         const { data, error: fnErr } = await supabase.functions.invoke("create_or_get_conversation", {
-          body: {},
+          body: {
+            application_id: claims.application_id,
+            identifier: claims.identifier,
+          },
           headers: authHeaders,
         });
         if (fnErr) throw fnErr;
