@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ImagePlus, LoaderCircle, Send, X } from "lucide-react";
+import { LoaderCircle, Send, X } from "lucide-react";
 import "./ChatWidget.css";
 import { createSupabaseClient } from "./supabase";
 import { decodeJwtClaims, parseWidgetParams } from "./token";
@@ -360,7 +360,7 @@ export default function ChatWidget() {
       }
       setMessages(data ?? []);
 
-      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId }, headers: authHeaders });
+      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId, application_id: claims.application_id, identifier: claims.identifier }, headers: authHeaders });
 
       setLoadingMessages(false);
 
@@ -487,6 +487,8 @@ export default function ChatWidget() {
       const { data: fnData, error: fnErr } = await supabase.functions.invoke("send_message", {
         body: {
           conversation_id: conversationId,
+          application_id: claims.application_id,
+          identifier: claims.identifier,
           sender_type: "customer",
           direction: "inbound",
           message_type: messageType,
@@ -514,7 +516,7 @@ export default function ChatWidget() {
       setText("");
       setFile(null);
       autosizeInput();
-      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId }, headers: authHeaders });
+      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId, application_id: claims.application_id, identifier: claims.identifier }, headers: authHeaders });
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       setError(m);
@@ -533,8 +535,6 @@ export default function ChatWidget() {
     setFile(f);
     ev.target.value = "";
   }
-
-  const identifierShort = claims?.identifier ? String(claims.identifier).slice(-6) : "";
 
   useEffect(() => {
     autosizeInput();
@@ -579,43 +579,9 @@ export default function ChatWidget() {
         <div className="msw-header">
           <div>
             <div className="msw-title">{theme.brandName}</div>
-            <div className="msw-subtitle">App {claims?.application_id ?? "-"} • {identifierShort}</div>
           </div>
           {ready && realtimeStatus !== "SUBSCRIBED" ? (
             <div className="msw-subtitle">Live: {realtimeStatus}</div>
-          ) : null}
-          {ready ? (
-            <button
-              type="button"
-              className="msw-headerBtn"
-              onClick={async () => {
-                if (!supabase || !conversationId) return;
-                setError("");
-                const body = {
-                  conversation_id: conversationId,
-                  action_key: "order_change_acceptance",
-                  assigned_to: myRole === "agent" ? "customer" : "agent",
-                  input: {
-                    title: "Order items change",
-                    description: "The order items were changed. Please accept or reject.",
-                    changes: [
-                      { item: "Burger", from: 1, to: 2 },
-                      { item: "Fries", from: 0, to: 1 },
-                    ],
-                    ctas: [
-                      { id: "accept", label: "Accept", url: "https://example.com/accept" },
-                      { id: "reject", label: "Reject", url: "https://example.com/reject" },
-                    ],
-                  },
-                  message_direction: myRole === "agent" ? "outbound" : "inbound",
-                };
-
-                const { error: fnErr } = await supabase.functions.invoke("create_action", { body, headers: authHeaders });
-                if (fnErr) setError(fnErr.message);
-              }}
-            >
-              Simulate action
-            </button>
           ) : null}
         </div>
 
@@ -721,11 +687,6 @@ export default function ChatWidget() {
           )}
 
           <div className="msw-composerRow">
-            <label className="msw-iconBtn" style={{ cursor: sending ? "not-allowed" : "pointer" }}>
-              <input type="file" accept="image/*" onChange={onPickFile} disabled={!ready || sending} style={{ display: "none" }} />
-              <ImagePlus size={18} />
-            </label>
-
             <textarea
               className="msw-input"
               ref={inputRef}
