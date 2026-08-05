@@ -24,11 +24,16 @@ export async function verifyJWT(token: string): Promise<JWTPayload> {
     }
 
     // Decode header and payload (convert Base64URL to standard Base64)
-    const headerBase64 = parts[0].replace(/-/g, "+").replace(/_/g, "/");
-    const payloadBase64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const header = JSON.parse(atob(headerBase64 + "===".slice((headerBase64.length + 3) % 4)));
-    const payload = JSON.parse(atob(payloadBase64 + "===".slice((payloadBase64.length + 3) % 4)));
-    
+    const decodeSegment = (segment: string) => {
+      const normalized = segment.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = normalized + "===".slice((normalized.length + 3) % 4);
+      // atob() yields a binary (latin-1) string, so decode it as UTF-8 before parsing.
+      const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+      return JSON.parse(new TextDecoder("utf-8").decode(bytes));
+    };
+    const header = decodeSegment(parts[0]);
+    const payload = decodeSegment(parts[1]);
+
     // Verify the signature using HMAC-SHA256
     const data = `${parts[0]}.${parts[1]}`;
     const key = await crypto.subtle.importKey(

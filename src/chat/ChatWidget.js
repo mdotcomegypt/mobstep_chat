@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, Send, X } from "lucide-react";
+import { LoaderCircle, RotateCw, Send, X } from "lucide-react";
 import "./ChatWidget.css";
 import { createSupabaseClient } from "./supabase";
-import { decodeJwtClaims, parseWidgetParams } from "./token";
-import { defaultTheme, mergeTheme } from "./theme";
+import { decodeJwtClaims, detectDir, parseWidgetParams } from "./token";
+import { defaultTheme, mergeTheme, themeFromConfig } from "./theme";
 
 function formatTime(ts) {
   try {
@@ -12,6 +12,24 @@ function formatTime(ts) {
   } catch {
     return "";
   }
+}
+
+const CONNECTION_STATES = {
+  SUBSCRIBED: { label: "Online", tone: "live" },
+  CHANNEL_ERROR: { label: "Reconnecting…", tone: "warn" },
+  TIMED_OUT: { label: "Reconnecting…", tone: "warn" },
+  CLOSED: { label: "Offline", tone: "off" },
+  disconnected: { label: "Connecting…", tone: "wait" }
+};
+
+function ConnectionDot({ status, ready }) {
+  const state = (ready && CONNECTION_STATES[status]) || CONNECTION_STATES.disconnected;
+  return (
+    <div className={`msw-conn msw-conn-${state.tone}`} title={state.label}>
+      <span className="msw-connDot" aria-hidden="true" />
+      <span className="msw-connLabel">{state.label}</span>
+    </div>
+  );
 }
 
 function ActionCard({ supabase, actionPayload, myRole, authHeaders }) {
@@ -131,9 +149,11 @@ function upsertMessage(list, msg) {
 }
 
 export default function ChatWidget() {
-  const { token, themeOverride } = useMemo(() => parseWidgetParams(window.location.search), []);
+  const { token, themeOverride, dir: dirHint } = useMemo(() => parseWidgetParams(window.location.search), []);
   const [remoteTheme, setRemoteTheme] = useState(null);
   const theme = useMemo(() => mergeTheme(mergeTheme(defaultTheme, remoteTheme), themeOverride), [remoteTheme, themeOverride]);
+  // The host app can pass ?dir/?lang; otherwise infer from the branded copy.
+  const dir = dirHint ?? detectDir(theme.brandName, theme.placeholder, theme.sendLabel);
 
   const [modalImageUrl, setModalImageUrl] = useState("");
 
@@ -156,7 +176,6 @@ export default function ChatWidget() {
   const [myRole, setMyRole] = useState("customer");
 
   const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
 
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -169,6 +188,9 @@ export default function ChatWidget() {
   const nearBottomRef = useRef(true);
   const bubbleAudioRef = useRef(null);
   const audioUnlockedRef = useRef(false);
+  // Keeps what was actually sent, so a failed message can be retried after the
+  // composer has already been cleared.
+  const outboxRef = useRef(new Map());
   const supabase = useMemo(() => {
     if (!token) return null;
     return createSupabaseClient();
@@ -193,7 +215,7 @@ export default function ChatWidget() {
         const json = await res.json();
         if (!active) return;
 
-        const nextTheme = json?.theme && typeof json.theme === "object" ? json.theme : null;
+        const nextTheme = themeFromConfig(json);
         if (nextTheme) setRemoteTheme(nextTheme);
       } catch {
         // ignore and keep defaults
@@ -255,8 +277,10 @@ export default function ChatWidget() {
     const el = inputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    const max = 120;
-    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+    const min = Number(theme.sizes.inputMinHeight) || 44;
+    const max = Number(theme.sizes.inputMaxHeight) || 132;
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, min), max)}px`;
+    el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }
 
   useEffect(() => {
@@ -429,60 +453,35 @@ export default function ChatWidget() {
     };
   }, [supabase, claims, conversationId]);
 
-  async function send() {
-    if (!supabase || !claims || !conversationId) return;
-    if (!text.trim() && !file) return;
-    if (sending) return;
-
-    setSending(true);
+  /** Pushes one message to the backend; the bubble is already on screen. */
+  async function deliver(clientMessageId, outgoing) {
     setError("");
 
-    const clientMessageId = randomId();
-    const localId = `local:${clientMessageId}`;
-    const nowIso = new Date().toISOString();
-
-    const optimistic = {
-      id: localId,
-      application_id: claims.application_id,
-      conversation_id: conversationId,
-      sender_identifier: claims.identifier,
-      sender_type: "customer",
-      direction: "inbound",
-      message_type: file ? "image" : "text",
-      text: text.trim() ? text.trim() : null,
-      payload: null,
-      client_message_id: clientMessageId,
-      created_at: nowIso,
-      __pending: true,
-      __failed: false,
-      __localImageUrl: file ? filePreviewUrl : "",
-    };
-
-    setMessages((prev) => upsertMessage(prev, optimistic));
-    setNewMessageCount(0);
-    scrollToBottom();
+    setMessages((prev) =>
+      prev.map((x) =>
+        x.client_message_id === clientMessageId ? { ...x, __pending: true, __failed: false } : x
+      )
+    );
 
     try {
       const attachments = [];
 
-      if (file) {
-        const path = `${claims.application_id}/${conversationId}/${randomId()}-${file.name}`;
-        const { error: upErr } = await supabase.storage.from(theme.storage.bucket).upload(path, file, {
+      if (outgoing.file) {
+        const path = `${claims.application_id}/${conversationId}/${randomId()}-${outgoing.file.name}`;
+        const { error: upErr } = await supabase.storage.from(theme.storage.bucket).upload(path, outgoing.file, {
           cacheControl: "3600",
           upsert: false,
-          contentType: file.type || undefined,
+          contentType: outgoing.file.type || undefined,
         });
         if (upErr) throw upErr;
 
         attachments.push({
           bucket: theme.storage.bucket,
           path,
-          mime_type: file.type,
-          size_bytes: file.size,
+          mime_type: outgoing.file.type,
+          size_bytes: outgoing.file.size,
         });
       }
-
-      const messageType = file ? "image" : "text";
 
       const { data: fnData, error: fnErr } = await supabase.functions.invoke("send_message", {
         body: {
@@ -491,8 +490,8 @@ export default function ChatWidget() {
           identifier: claims.identifier,
           sender_type: "customer",
           direction: "inbound",
-          message_type: messageType,
-          text: text.trim() ? text.trim() : null,
+          message_type: outgoing.file ? "image" : "text",
+          text: outgoing.text || null,
           client_message_id: clientMessageId,
           attachments,
         },
@@ -505,7 +504,7 @@ export default function ChatWidget() {
           upsertMessage(prev, {
             id: fnData.message_id,
             client_message_id: clientMessageId,
-            created_at: fnData.created_at ?? nowIso,
+            created_at: fnData.created_at ?? outgoing.createdAt,
             __pending: false,
             __failed: false,
             __localImageUrl: "",
@@ -513,20 +512,72 @@ export default function ChatWidget() {
         );
       }
 
-      setText("");
-      setFile(null);
-      autosizeInput();
-      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId, application_id: claims.application_id, identifier: claims.identifier }, headers: authHeaders });
-    } catch (e) {
-      const m = e instanceof Error ? e.message : String(e);
-      setError(m);
+      const stored = outboxRef.current.get(clientMessageId);
+      if (stored?.localUrl) URL.revokeObjectURL(stored.localUrl);
+      outboxRef.current.delete(clientMessageId);
 
+      await supabase.functions.invoke("mark_read", { body: { conversation_id: conversationId, application_id: claims.application_id, identifier: claims.identifier }, headers: authHeaders });
+    } catch {
+      // The bubble's own "Not sent / Retry" state reports this; a banner on top
+      // of the conversation would just duplicate it.
       setMessages((prev) =>
         prev.map((x) => (x.client_message_id === clientMessageId ? { ...x, __pending: false, __failed: true } : x))
       );
-    } finally {
-      setSending(false);
     }
+  }
+
+  function send() {
+    if (!supabase || !claims || !conversationId) return;
+
+    const outgoingText = text.trim();
+    const outgoingFile = file;
+    if (!outgoingText && !outgoingFile) return;
+
+    const clientMessageId = randomId();
+    const createdAt = new Date().toISOString();
+    // Own copy of the preview URL: the composer's own preview is revoked as
+    // soon as the attachment is cleared below.
+    const localUrl = outgoingFile ? URL.createObjectURL(outgoingFile) : "";
+    const outgoing = { text: outgoingText, file: outgoingFile, createdAt, localUrl };
+
+    outboxRef.current.set(clientMessageId, outgoing);
+
+    setMessages((prev) =>
+      upsertMessage(prev, {
+        id: `local:${clientMessageId}`,
+        application_id: claims.application_id,
+        conversation_id: conversationId,
+        sender_identifier: claims.identifier,
+        sender_type: "customer",
+        direction: "inbound",
+        message_type: outgoingFile ? "image" : "text",
+        text: outgoingText || null,
+        payload: null,
+        client_message_id: clientMessageId,
+        created_at: createdAt,
+        __pending: true,
+        __failed: false,
+        __localImageUrl: localUrl,
+      })
+    );
+
+    // Free the composer straight away so typing never waits on the network.
+    setText("");
+    setFile(null);
+    setNewMessageCount(0);
+    requestAnimationFrame(() => {
+      autosizeInput();
+      inputRef.current?.focus();
+    });
+    scrollToBottom();
+
+    deliver(clientMessageId, outgoing);
+  }
+
+  function retry(clientMessageId) {
+    const outgoing = outboxRef.current.get(clientMessageId);
+    if (!outgoing) return;
+    deliver(clientMessageId, outgoing);
   }
 
   async function onPickFile(ev) {
@@ -560,11 +611,25 @@ export default function ChatWidget() {
     "--msw-danger": theme.colors.danger,
     "--msw-container-radius": `${theme.radius.container}px`,
     "--msw-bubble-radius": `${theme.radius.bubble}px`,
+    "--msw-bubble-radius-me": `${theme.radius.bubbleCustomer ?? theme.radius.bubble}px`,
+    "--msw-bubble-radius-other": `${theme.radius.bubbleAgent ?? theme.radius.bubble}px`,
     "--msw-input-radius": `${theme.radius.input}px`,
+    "--msw-font": theme.font.family,
+    "--msw-font-size": `${theme.font.size}px`,
+    "--msw-meta-size": `${theme.font.metaSize}px`,
+    "--msw-max-width": `${theme.sizes.maxWidth}px`,
+    "--msw-header-height": `${theme.sizes.headerHeight}px`,
+    "--msw-logo-size": `${theme.sizes.logoSize}px`,
+    "--msw-title-size": `${theme.sizes.titleSize}px`,
+    "--msw-input-min-height": `${theme.sizes.inputMinHeight}px`,
+    "--msw-input-max-height": `${theme.sizes.inputMaxHeight}px`,
+    "--msw-button-size": `${theme.sizes.buttonSize}px`,
+    "--msw-bubble-max-width": `${theme.sizes.bubbleMaxWidth}%`,
+    "--msw-image-max-width": `${theme.sizes.imageMaxWidth}px`,
   };
 
   return (
-    <div className="msw-root" style={cssVars}>
+    <div className="msw-root" style={cssVars} dir={dir}>
       {modalImageUrl ? (
         <div
           className="msw-modal"
@@ -577,12 +642,15 @@ export default function ChatWidget() {
       ) : null}
       <div className="msw-shell">
         <div className="msw-header">
-          <div>
-            <div className="msw-title">{theme.brandName}</div>
-          </div>
-          {ready && realtimeStatus !== "SUBSCRIBED" ? (
-            <div className="msw-subtitle">Live: {realtimeStatus}</div>
+          {theme.logoUrl ? (
+            <img className="msw-logo" src={theme.logoUrl} alt="" aria-hidden="true" />
           ) : null}
+          <div className="msw-headerText">
+            <div className="msw-title" dir="auto">
+              {theme.brandName}
+            </div>
+          </div>
+          <ConnectionDot status={realtimeStatus} ready={ready} />
         </div>
 
         {!!error && <div className="msw-error">{error}</div>}
@@ -612,7 +680,14 @@ export default function ChatWidget() {
           {messages.map((m) => {
             const mine = m.sender_identifier === claims?.identifier;
             const rowClass = mine ? "msw-bubbleRow msw-me" : "msw-bubbleRow msw-other";
-            const bubbleClass = mine ? "msw-bubble msw-me" : "msw-bubble msw-other";
+            const bubbleClass = [
+              "msw-bubble",
+              mine ? "msw-me" : "msw-other",
+              m.__pending ? "msw-isPending" : "",
+              m.__failed ? "msw-isFailed" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
 
             const isImage = m.message_type === "image";
 
@@ -621,10 +696,11 @@ export default function ChatWidget() {
                 <div key={m.id} className={rowClass}>
                   <div className={bubbleClass}>
                     <ActionCard supabase={supabase} actionPayload={m.payload} myRole={myRole} authHeaders={authHeaders} />
-                    <div className="msw-meta">
-                      <span>{formatTime(m.created_at)}</span>
-                      <span>{m.sender_type}</span>
-                    </div>
+                    {theme.showTime ? (
+                      <div className="msw-meta">
+                        <span>{formatTime(m.created_at)}</span>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               );
@@ -633,7 +709,11 @@ export default function ChatWidget() {
             return (
               <div key={m.id} className={rowClass}>
                 <div className={bubbleClass}>
-                  {m.text ? <div>{m.text}</div> : null}
+                  {m.text ? (
+                    <div className="msw-text" dir="auto">
+                      {m.text}
+                    </div>
+                  ) : null}
                   {isImage ? (
                     <div style={{ marginTop: m.text ? 8 : 0 }}>
                       {m.__pending && m.__localImageUrl ? (
@@ -649,15 +729,27 @@ export default function ChatWidget() {
                     </div>
                   ) : null}
                   <div className="msw-meta">
-                    <span>{formatTime(m.created_at)}</span>
-                    <span>{m.sender_type}</span>
+                    {theme.showTime ? <span>{formatTime(m.created_at)}</span> : null}
                     {m.__pending ? (
-                      <span className="msw-status">
-                        <LoaderCircle className="msw-spinner" size={14} />
-                        Sending
+                      <span className="msw-status" aria-label="Sending">
+                        <LoaderCircle className="msw-spinner" size={12} />
                       </span>
                     ) : null}
-                    {m.__failed ? <span className="msw-status msw-failed">Failed</span> : null}
+                    {m.__failed ? (
+                      <span className="msw-status msw-failed">
+                        Not sent
+                        {outboxRef.current.has(m.client_message_id) ? (
+                          <button
+                            type="button"
+                            className="msw-retryBtn"
+                            onClick={() => retry(m.client_message_id)}
+                          >
+                            <RotateCw size={11} />
+                            Retry
+                          </button>
+                        ) : null}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -691,7 +783,8 @@ export default function ChatWidget() {
               className="msw-input"
               ref={inputRef}
               value={text}
-              placeholder={ready ? "Write a message..." : "Connecting..."}
+              dir="auto"
+              placeholder={ready ? theme.placeholder : "Connecting…"}
               onChange={(e) => {
                 setText(e.target.value);
                 autosizeInput();
@@ -702,7 +795,7 @@ export default function ChatWidget() {
                   send();
                 }
               }}
-              disabled={!ready || sending}
+              disabled={!ready}
               rows={1}
             />
 
@@ -710,8 +803,9 @@ export default function ChatWidget() {
               className="msw-iconBtn msw-sendBtn"
               type="button"
               onClick={send}
-              disabled={!ready || sending || (!text.trim() && !file)}
-              aria-label="Send"
+              disabled={!ready || (!text.trim() && !file)}
+              aria-label={theme.sendLabel}
+              title={theme.sendLabel}
             >
               <Send size={18} />
             </button>

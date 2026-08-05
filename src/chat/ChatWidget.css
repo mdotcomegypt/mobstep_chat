@@ -1,78 +1,176 @@
 .msw-root {
-  height: 100vh;
-  width: 100vw;
+  /* dvh keeps the composer above the on-screen keyboard in a WebView */
+  height: 100dvh;
+  width: 100%;
   display: flex;
   justify-content: center;
   background: var(--msw-bg);
+  font-family: var(--msw-font);
+  font-size: var(--msw-font-size);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  overflow: hidden;
+}
+
+@supports not (height: 100dvh) {
+  .msw-root {
+    height: 100vh;
+  }
 }
 
 .msw-shell {
-  height: 100vh;
+  height: 100%;
   width: 100%;
-  max-width: 520px;
+  max-width: var(--msw-max-width);
   display: flex;
   flex-direction: column;
   background: var(--msw-bg);
+  min-height: 0;
 }
+
+/* ---------- Header ---------- */
 
 .msw-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  flex: 0 0 auto;
+  box-sizing: content-box;
+  min-height: var(--msw-header-height);
+  /* The right gap is physical, not logical: the host app overlays its own
+     close button on the top-right corner in both LTR and RTL. */
+  padding: 0 44px 0 14px;
+  padding-top: env(safe-area-inset-top);
   background: var(--msw-header-bg);
   border-bottom: 1px solid var(--msw-border);
-  padding: 12px 14px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 10px;
 }
 
-.msw-headerBtn {
-  border: 1px solid var(--msw-btn-border);
-  background: transparent;
-  color: var(--msw-header-text);
-  border-radius: 999px;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 700;
+.msw-logo {
+  width: var(--msw-logo-size);
+  height: var(--msw-logo-size);
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+  background: var(--msw-bg);
+}
+
+.msw-headerText {
+  flex: 1;
+  min-width: 0;
 }
 
 .msw-title {
-  font-weight: 700;
-  font-size: 15px;
-  line-height: 1.2;
+  font-weight: 600;
+  font-size: var(--msw-title-size);
+  line-height: 1.25;
   color: var(--msw-header-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .msw-subtitle {
   font-size: 12px;
   color: var(--msw-header-text);
   opacity: 0.7;
-  margin-top: 2px;
+  text-align: center;
+  padding: 6px 0;
 }
 
+/* ---------- Connection indicator ---------- */
+
+.msw-conn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--msw-header-text);
+  opacity: 0.75;
+}
+
+.msw-connDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.msw-conn-live {
+  color: #22c55e;
+  opacity: 1;
+}
+
+.msw-conn-live .msw-connLabel {
+  display: none;
+}
+
+.msw-conn-warn {
+  color: #f59e0b;
+  opacity: 1;
+}
+
+.msw-conn-off {
+  color: var(--msw-danger);
+  opacity: 1;
+}
+
+.msw-conn-wait .msw-connDot,
+.msw-conn-warn .msw-connDot {
+  animation: msw-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes msw-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msw-conn-wait .msw-connDot,
+  .msw-conn-warn .msw-connDot,
+  .msw-spinner {
+    animation: none;
+  }
+}
+
+/* ---------- Messages ---------- */
+
 .msw-messages {
-  flex: 1;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  position: relative;
-  padding-bottom: 70px;
+  gap: 8px;
 }
 
 .msw-newMsgBtn {
   position: sticky;
-  bottom: 10px;
+  bottom: 6px;
   align-self: center;
   background: var(--msw-accent);
   color: var(--msw-btn-text);
   border: 1px solid var(--msw-btn-border);
   border-radius: 999px;
-  padding: 10px 14px;
+  padding: 8px 14px;
+  font-family: inherit;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 }
 
 .msw-bubbleRow {
@@ -88,40 +186,81 @@
 }
 
 .msw-bubble {
-  max-width: 82%;
-  border-radius: var(--msw-bubble-radius);
-  padding: 10px 12px;
+  max-width: var(--msw-bubble-max-width);
+  padding: 9px 12px;
   color: var(--msw-bubble-text);
-  word-break: break-word;
+  overflow-wrap: anywhere;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.msw-text {
+  font-size: var(--msw-font-size);
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .msw-bubble.msw-me {
   background: var(--msw-bubble-me);
-  border-top-right-radius: 8px;
+  border-radius: var(--msw-bubble-radius-me);
+  border-end-end-radius: 6px;
 }
 
 .msw-bubble.msw-other {
   background: var(--msw-bubble-other);
-  border-top-left-radius: 8px;
+  border-radius: var(--msw-bubble-radius-other);
+  border-end-start-radius: 6px;
 }
 
 .msw-meta {
-  margin-top: 6px;
-  font-size: 11px;
+  margin-top: 4px;
+  font-size: var(--msw-meta-size);
+  line-height: 1;
   color: var(--msw-bubble-subtle);
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
+.msw-bubbleRow.msw-me .msw-meta {
+  justify-content: flex-end;
+}
+
 .msw-status {
   display: inline-flex;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
 }
 
+/* Dimming the whole bubble signals "not delivered" on any brand colour,
+   which a red label on a coloured bubble cannot do reliably. */
+.msw-bubble.msw-isFailed {
+  opacity: 0.72;
+}
+
+.msw-bubble.msw-isPending {
+  opacity: 0.88;
+}
+
 .msw-failed {
-  color: rgba(239, 68, 68, 0.95);
+  color: var(--msw-bubble-text);
+  font-weight: 600;
+}
+
+.msw-retryBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 6px;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--msw-meta-size);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .msw-spinner {
@@ -139,26 +278,27 @@
 
 .msw-img {
   width: auto;
-  max-width: 260px;
-  max-height: 260px;
+  max-width: min(var(--msw-image-max-width), 100%);
+  max-height: var(--msw-image-max-width);
   border-radius: 12px;
-  border: 1px solid var(--msw-border);
   display: block;
   cursor: pointer;
 }
 
+/* ---------- Composer ---------- */
+
 .msw-composer {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
+  flex: 0 0 auto;
   background: var(--msw-footer-bg);
   border-top: 1px solid var(--msw-border);
-  padding: 10px;
+  padding: 8px 10px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
 }
 
 .msw-composerRow {
   display: flex;
   gap: 8px;
+  align-items: flex-end;
 }
 
 .msw-input {
@@ -168,31 +308,56 @@
   color: var(--msw-input-text);
   border: 1px solid var(--msw-input-border);
   border-radius: var(--msw-input-radius);
-  padding: 10px 12px;
-  font-size: 14px;
+  padding: 11px 14px;
+  font-family: inherit;
+  /* 16px floor stops mobile WebViews from zooming on focus */
+  font-size: max(var(--msw-font-size), 16px);
   line-height: 1.35;
-  min-height: 42px;
-  max-height: 120px;
+  min-height: var(--msw-input-min-height);
+  max-height: var(--msw-input-max-height);
+  height: var(--msw-input-min-height);
   resize: none;
-  overflow: auto;
+  overflow-y: hidden;
   outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.msw-input:focus {
+  border-color: var(--msw-accent);
+}
+
+.msw-input::placeholder {
+  color: var(--msw-input-text);
+  opacity: 0.45;
+}
+
+.msw-input:disabled {
+  opacity: 0.7;
 }
 
 .msw-iconBtn {
-  height: 42px;
-  width: 42px;
+  height: var(--msw-button-size);
+  width: var(--msw-button-size);
+  flex: 0 0 auto;
   box-sizing: border-box;
-  border-radius: 12px;
+  border-radius: 50%;
   border: 1px solid var(--msw-input-border);
   background: var(--msw-input-bg);
   color: var(--msw-input-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.msw-iconBtn:active:not(:disabled) {
+  transform: scale(0.94);
 }
 
 .msw-iconBtn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
+  cursor: default;
 }
 
 .msw-sendBtn {
@@ -200,6 +365,13 @@
   color: var(--msw-btn-icon);
   border-color: var(--msw-btn-border);
 }
+
+/* RTL composers put the send glyph on the wrong side; mirror it instead. */
+[dir="rtl"] .msw-sendBtn svg {
+  transform: scaleX(-1);
+}
+
+/* ---------- Overlays ---------- */
 
 .msw-modal {
   position: fixed;
@@ -221,31 +393,34 @@
 }
 
 .msw-error {
+  flex: 0 0 auto;
   margin: 10px 14px 0;
   padding: 10px 12px;
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.12);
-  color: #fecaca;
-  border-radius: 14px;
+  border: 1px solid var(--msw-danger);
+  background: transparent; /* fallback for engines without color-mix() */
+  background: color-mix(in srgb, var(--msw-danger) 12%, transparent);
+  color: var(--msw-danger);
+  border-radius: var(--msw-input-radius);
   font-size: 13px;
+  line-height: 1.4;
 }
 
 .msw-attachPreview {
-  margin-top: 10px;
+  margin-bottom: 8px;
   display: flex;
   gap: 10px;
   align-items: center;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--msw-input-bg);
   border: 1px solid var(--msw-border);
-  border-radius: 14px;
-  padding: 10px;
+  border-radius: var(--msw-input-radius);
+  padding: 8px;
 }
 
 .msw-attachThumb {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid var(--msw-border);
 }
 
@@ -256,7 +431,7 @@
 
 .msw-attachName {
   font-size: 13px;
-  color: var(--msw-bubble-text);
+  color: var(--msw-input-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -265,5 +440,67 @@
 .msw-attachHint {
   margin-top: 2px;
   font-size: 12px;
-  color: var(--msw-bubble-subtle);
+  color: var(--msw-input-text);
+  opacity: 0.6;
+}
+
+/* ---------- Action cards ---------- */
+
+.msw-actionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msw-actionTitle {
+  font-weight: 600;
+  font-size: var(--msw-font-size);
+}
+
+.msw-actionDesc,
+.msw-actionStatus {
+  font-size: 13px;
+  opacity: 0.85;
+  line-height: 1.4;
+}
+
+.msw-actionChanges {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.msw-actionChange {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.msw-actionCtas {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.msw-actionBtn {
+  border: 1px solid var(--msw-btn-border);
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.msw-actionBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.msw-actionPrimary {
+  background: var(--msw-accent);
+  color: var(--msw-btn-text);
 }

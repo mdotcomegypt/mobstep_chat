@@ -3,8 +3,14 @@ function base64UrlToJson(input) {
   const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
   // Add padding back (Android removes it with .replace("=", ""))
   const padded = normalized + "===".slice((normalized.length + 3) % 4);
-  return JSON.parse(atob(padded));
+  // atob() yields a binary (latin-1) string, so decode it as UTF-8 before parsing;
+  // otherwise any non-ASCII character in the payload corrupts the JSON.
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return JSON.parse(new TextDecoder("utf-8").decode(bytes));
 }
+
+const RTL_LANGS = ["ar", "he", "fa", "ur", "ps", "sd", "ckb", "dv", "yi"];
 
 export function parseWidgetParams(search) {
   const params = new URLSearchParams(search);
@@ -20,7 +26,20 @@ export function parseWidgetParams(search) {
     }
   }
 
-  return { token, themeOverride };
+  // Optional hints from the host app: ?dir=rtl or ?lang=ar
+  const dirParam = (params.get("dir") || "").toLowerCase();
+  const lang = (params.get("lang") || "").toLowerCase().split(/[-_]/)[0];
+  let dir = null;
+  if (dirParam === "rtl" || dirParam === "ltr") dir = dirParam;
+  else if (lang) dir = RTL_LANGS.includes(lang) ? "rtl" : "ltr";
+
+  return { token, themeOverride, dir };
+}
+
+/** Fallback when the host app sends no language hint: sniff the theme copy. */
+export function detectDir(...samples) {
+  const rtlChars = /[֐-׿؀-ۿݐ-ݿࢠ-ࣿיִ-﷿ﹰ-﻿]/;
+  return samples.some((s) => typeof s === "string" && rtlChars.test(s)) ? "rtl" : "ltr";
 }
 
 export function decodeJwtClaims(token) {
